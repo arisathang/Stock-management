@@ -1,5 +1,8 @@
 -- This script completely resets and initializes the database.
 
+DROP TABLE IF EXISTS invoice_status_logs;
+DROP TABLE IF EXISTS stock_movements;
+DROP TABLE IF EXISTS invoices;
 DROP TABLE IF EXISTS stock_history;
 DROP TABLE IF EXISTS vendor_products;
 DROP TABLE IF EXISTS vendors;
@@ -13,7 +16,7 @@ CREATE TABLE products (
     id VARCHAR(255) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     unit VARCHAR(50) NOT NULL,
-    image_url VARCHAR(1024), -- New column for product images
+    image_url VARCHAR(1024),
     remaining_stock INT NOT NULL DEFAULT 0,
     min_stock INT NOT NULL,
     max_stock INT NOT NULL,
@@ -41,42 +44,70 @@ CREATE TABLE vendor_products (
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
 );
 
--- New table to store daily stock snapshots
 CREATE TABLE stock_history (
     id SERIAL PRIMARY KEY,
     product_id VARCHAR(255) NOT NULL,
     record_date DATE NOT NULL,
     remaining_stock INT NOT NULL,
-    UNIQUE(product_id, record_date), -- Ensure only one entry per product per day
+    UNIQUE(product_id, record_date),
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
 );
+
+CREATE TABLE invoices (
+    id SERIAL PRIMARY KEY,
+    invoice_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    vendor_id VARCHAR(255) NOT NULL,
+    status VARCHAR(50) DEFAULT 'Pending',
+    modified_by VARCHAR(255),
+    items JSONB,
+    total_cost DECIMAL(10, 2),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (vendor_id) REFERENCES vendors(id)
+);
+
+CREATE TABLE stock_movements (
+    id SERIAL PRIMARY KEY,
+    product_id VARCHAR(255) NOT NULL,
+    quantity INT NOT NULL,
+    movement_type VARCHAR(50) NOT NULL,
+    description TEXT,
+    movement_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+);
+
+CREATE TABLE invoice_status_logs (
+    id SERIAL PRIMARY KEY,
+    invoice_id INT NOT NULL,
+    old_status VARCHAR(50),
+    new_status VARCHAR(50) NOT NULL,
+    changed_by VARCHAR(255),
+    change_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+);
+
 
 -- =================================================================
 -- INSERT INITIAL DATA
 -- =================================================================
-
--- Insert products with placeholder image URLs
 INSERT INTO products (id, name, unit, image_url, remaining_stock, min_stock, max_stock, last_year_prediction) VALUES
-('item1', 'Chicken', 'kg', 'https://placehold.co/400x400/FFDDC1/000000?text=Chicken', 100, 50, 200, 150),
-('item2', 'Potatoes', 'kg', 'https://placehold.co/400x400/F0E68C/000000?text=Potatoes', 80, 40, 150, 120),
-('item3', 'Flour', 'kg', 'https://placehold.co/400x400/FAFAD2/000000?text=Flour', 50, 25, 100, 75),
-('item4', 'Seasoning Powder', 'kg', 'https://placehold.co/400x400/E6E6FA/000000?text=Seasoning', 20, 10, 40, 30),
-('item5', 'Ketchup', 'liters', 'https://placehold.co/400x400/FF6347/FFFFFF?text=Ketchup', 30, 15, 60, 40),
-('item6', 'Chilli Sauce', 'liters', 'https://placehold.co/400x400/DC143C/FFFFFF?text=Chilli', 30, 15, 60, 40),
-('item7', 'Cooking Oil', 'liters', 'https://placehold.co/400x400/FFFFE0/000000?text=Oil', 60, 30, 120, 90),
-('item8', 'Paper Bags', 'pcs', 'https://placehold.co/400x400/D2B48C/000000?text=Bags', 1000, 500, 3000, 2000),
-('item9', 'Napkins', 'packs', 'https://placehold.co/400x400/FFFFFF/000000?text=Napkins', 50, 20, 100, 80),
-('item10', 'Forks', 'pcs', 'https://placehold.co/400x400/C0C0C0/000000?text=Forks', 800, 400, 2000, 1500);
+('item1', 'Chicken', 'kg', '/item1.jpg', 100, 50, 200, 150),
+('item2', 'Potatoes', 'kg', '/item2.jpg', 80, 40, 150, 120),
+('item3', 'Flour', 'kg', '/item3.jpg', 50, 25, 100, 75),
+('item4', 'Seasoning Powder', 'kg', '/item4.jpg', 20, 10, 40, 30),
+('item5', 'Ketchup', 'liters', '/item5.jpg', 30, 15, 60, 40),
+('item6', 'Chilli Sauce', 'liters', '/item6.jpg', 30, 15, 60, 40),
+('item7', 'Cooking Oil', 'liters', '/item7.jpg', 60, 30, 120, 90),
+('item8', 'Paper Bags', 'pcs', '/item8.jpg', 1000, 500, 3000, 2000),
+('item9', 'Napkins', 'packs', '/item9.jpg', 50, 20, 100, 80),
+('item10', 'Forks', 'pcs', '/item10.jpg', 800, 400, 2000, 1500);
 
--- Insert vendors
 INSERT INTO vendors (id, name, shipping_cost, free_shipping_threshold) VALUES
 ('vendor1', 'Poultry King', 30, 500),
 ('vendor2', 'Farm Fresh Produce', 20, 250),
 ('vendor3', 'Global Food Supplies', 40, 800),
 ('vendor4', 'Packaging & Co.', 25, 300);
 
--- Insert vendor pricing
--- (Vendor pricing data remains the same)
+-- More competitive pricing data
 INSERT INTO vendor_products (vendor_id, product_id, price, bundles) VALUES
 ('vendor1', 'item1', 8.50, '[{"quantity": 50, "price": 400}]'),
 ('vendor1', 'item2', 1.30, NULL),
@@ -118,3 +149,8 @@ INSERT INTO vendor_products (vendor_id, product_id, price, bundles) VALUES
 ('vendor4', 'item8', 0.10, '[{"quantity": 1000, "price": 90}]'),
 ('vendor4', 'item9', 1.50, '[{"quantity": 100, "price": 140}]'),
 ('vendor4', 'item10', 0.05, '[{"quantity": 2000, "price": 95}]');
+
+INSERT INTO stock_movements (product_id, quantity, movement_type, description) VALUES
+('item1', 50, 'IN', 'Received from Poultry King order #PK101'),
+('item1', -15, 'OUT', 'Used for daily sales'),
+('item2', -5, 'WASTE', 'Spoilage');

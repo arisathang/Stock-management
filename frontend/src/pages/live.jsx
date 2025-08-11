@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Calendar } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowDownRight, Calendar } from 'lucide-react';
 
+// The fix is here: These helper functions and objects were missing.
 const getStockStatus = (item) => {
   if (item.remaining_stock < item.min_stock) return 'understock';
   if (item.remaining_stock > item.max_stock) return 'overstock';
@@ -13,72 +14,65 @@ const statusStyles = {
   optimal: { bgColor: 'bg-green-100', textColor: 'text-green-800', borderColor: 'border-green-500', barColor: 'bg-green-500' },
 };
 
-const StockItemCard = ({ item, onStockChange, isEditable }) => {
+const StockItemCard = ({ item, onRecordMovement, isEditable }) => {
+  const [amountOut, setAmountOut] = useState('');
   const status = getStockStatus(item);
   const styles = statusStyles[status];
   const percentage = Math.min((item.remaining_stock / item.max_stock) * 100, 100);
 
-  // --- Input Box Fix ---
-  // 1. Use local state to manage the input value directly for a smooth typing experience.
-  const [inputValue, setInputValue] = useState(item.remaining_stock);
-  const debounceTimeout = useRef(null);
-
-  // Update local state if the prop from parent changes (e.g., new date selected)
-  useEffect(() => {
-    setInputValue(item.remaining_stock);
-  }, [item.remaining_stock]);
-
-  const handleInputChange = (e) => {
-    const value = e.target.value;
-    setInputValue(value);
-
-    // 2. "Debounce" the update to the parent component.
-    // This clears the previous timer and sets a new one.
-    // The onStockChange function is only called after the user stops typing for 500ms.
-    clearTimeout(debounceTimeout.current);
-    if (isEditable) {
-        debounceTimeout.current = setTimeout(() => {
-            onStockChange(item.id, parseInt(value, 10));
-        }, 500); // 0.5 second delay
-    }
+  const handleRecord = () => {
+      const quantity = parseInt(amountOut, 10);
+      if (!quantity || quantity <= 0) {
+          alert('Please enter a valid positive number for stock out.');
+          return;
+      }
+      onRecordMovement({
+          productId: item.id,
+          quantity: -quantity,
+          movementType: 'OUT',
+          description: 'Daily usage'
+      });
+      setAmountOut('');
   };
 
   return (
-    <div className={`rounded-lg shadow-md p-4 flex flex-col justify-between ${styles.bgColor} border-l-4 ${styles.borderColor}`}>
-      <img 
-        src={item.image_url} 
-        alt={item.name} 
-        className="w-full h-32 object-cover rounded-md mb-4"
-        onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x400/cccccc/000000?text=Image+Not+Found'; }}
-      />
+    <div className={`rounded-lg shadow-md p-4 flex flex-col ${styles.bgColor} border-l-4 ${styles.borderColor}`}>
+      <img src={item.image_url} alt={item.name} className="w-full h-32 object-cover rounded-md mb-4" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x400/cccccc/000000?text=Image+Not+Found'; }}/>
       <div>
         <h3 className={`font-bold text-lg ${styles.textColor}`}>{item.name}</h3>
-        <p className={`text-sm ${styles.textColor}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</p>
+        <div className="text-2xl font-bold text-gray-700 my-2">
+            {item.remaining_stock} <span className="text-lg font-medium text-gray-500">{item.unit}</span>
+        </div>
+        <p className={`text-sm font-medium ${styles.textColor}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</p>
       </div>
       <div className="mt-4">
-        <div className="flex items-center justify-center">
-          <input
-            type="number"
-            value={inputValue}
-            onChange={handleInputChange}
-            disabled={!isEditable} // Input is disabled for past dates
-            className="w-24 text-center p-2 border rounded-md focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200"
-          />
-          <span className={`ml-2 font-medium ${styles.textColor}`}>{item.unit}</span>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-2.5 mt-3">
+        <div className="w-full bg-gray-200 rounded-full h-2.5">
           <div className={`${styles.barColor} h-2.5 rounded-full`} style={{ width: `${percentage}%` }}></div>
         </div>
         <p className="text-xs text-center mt-1 text-gray-500">Min: {item.min_stock} / Max: {item.max_stock}</p>
       </div>
+      {isEditable && (
+        <div className="mt-4 flex items-center space-x-2">
+            <input
+              type="number"
+              placeholder="Amount Out"
+              value={amountOut}
+              onChange={(e) => setAmountOut(e.target.value)}
+              className="w-full text-center p-2 border rounded-md focus:ring-2 focus:ring-indigo-500"
+            />
+            <button onClick={handleRecord} className="p-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">
+                <ArrowDownRight />
+            </button>
+        </div>
+      )}
     </div>
   );
 };
 
-const LivePage = ({ stockItems, onStockChange, selectedDate, setSelectedDate, isToday }) => {
+const LivePage = ({ stockItems, onRecordMovement, selectedDate, setSelectedDate, isToday }) => {
   return (
     <div className="relative min-h-screen bg-gray-100 p-6">
-      <div className="mb-6 bg-white p-4 rounded-lg shadow-md flex items-center justify-between">
+       <div className="mb-6 bg-white p-4 rounded-lg shadow-md flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-700">
             {isToday ? "Today's Stock Status" : `Viewing Stock for ${selectedDate}`}
           </h2>
@@ -92,15 +86,9 @@ const LivePage = ({ stockItems, onStockChange, selectedDate, setSelectedDate, is
             />
           </div>
       </div>
-
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
         {stockItems.map(item => (
-          <StockItemCard 
-            key={item.id} 
-            item={item} 
-            onStockChange={onStockChange}
-            isEditable={isToday} // Only allow editing for the current day
-          />
+          <StockItemCard key={item.id} item={item} onRecordMovement={onRecordMovement} isEditable={isToday} />
         ))}
       </div>
     </div>

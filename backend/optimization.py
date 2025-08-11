@@ -1,5 +1,6 @@
-# optimization.py (with Savings)
-# Logic to find the most cost-effective purchasing options and calculate savings.
+# optimization.py (with Filter & Savings)
+# Logic to find the most cost-effective purchasing options, calculate savings,
+# and filter by selected vendors.
 
 import json
 
@@ -18,30 +19,38 @@ def _calculate_item_cost(quantity, product_pricing):
     savings = 0
 
     if bundles_json:
+        # Sort bundles by quantity (desc) to use largest bundles first
         bundles = sorted(bundles_json, key=lambda b: b['quantity'], reverse=True)
+        
         for bundle in bundles:
             num_bundles = remaining_qty // bundle['quantity']
             if num_bundles > 0:
                 cost += num_bundles * bundle['price']
                 remaining_qty -= num_bundles * bundle['quantity']
     
+    # Cost for the remaining items not in a bundle
     cost += remaining_qty * float(price)
     savings = non_discounted_cost - cost
     
     return {"cost": cost, "nonDiscountedCost": non_discounted_cost, "savings": savings}
 
 
-def find_best_vendor_for_item(item, db_connection):
+def find_best_vendor_for_item(item, db_connection, vendor_filter=[]):
     """
-    Finds the cheapest vendor for a single item and returns the cost details.
+    Finds the cheapest vendor for a single item, optionally filtered by a list of vendor IDs.
     """
     best_option = {"vendor_id": None, "cost": float('inf'), "savings": 0}
     cur = db_connection.cursor()
 
-    cur.execute(
-        'SELECT vendor_id, price, bundles FROM vendor_products WHERE product_id = %s;',
-        (item['id'],)
-    )
+    query = 'SELECT vendor_id, price, bundles FROM vendor_products WHERE product_id = %s'
+    params = [item['id']]
+
+    # If a filter is provided, add it to the query
+    if vendor_filter:
+        query += ' AND vendor_id = ANY(%s)'
+        params.append(vendor_filter)
+
+    cur.execute(query, tuple(params))
     all_vendor_prices = cur.fetchall()
 
     for vendor_price_info in all_vendor_prices:

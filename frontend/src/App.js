@@ -1,5 +1,3 @@
-// src/App.js (with History)
-
 import React, { useState, useEffect, useCallback } from 'react';
 import LivePage from './pages/live';
 import ReportPage from './pages/report';
@@ -7,7 +5,6 @@ import Header from './components/Header';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
 
-// Helper to get today's date in YYYY-MM-DD format
 const getTodayDateString = () => new Date().toISOString().split('T')[0];
 
 export default function App() {
@@ -19,55 +16,72 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [vendors, setVendors] = useState([]);
+  const [movementLog, setMovementLog] = useState([]);
+  const [invoiceLogs, setInvoiceLogs] = useState({});
 
   const fetchStockStatus = useCallback(async (date) => {
     try {
       setIsLoading(true);
       setError(null);
-      // Pass the selected date as a query parameter
       const response = await fetch(`${API_URL}/stock-status?date=${date}`);
       if (!response.ok) throw new Error(`Network error (${response.status})`);
       const data = await response.json();
       setStockItems(data.stockItems);
       setAlerts(data.alerts);
-    } catch (error) {
-      setError(`Failed to fetch stock status for ${date}: ${error.message}`);
+    } catch (err) {
+      setError(`Failed to fetch stock status for ${date}: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
   }, []);
+  
+  const fetchMovementLog = useCallback(async () => {
+      try {
+          const response = await fetch(`${API_URL}/movement-log`);
+          if (!response.ok) throw new Error('Failed to fetch movement log');
+          const data = await response.json();
+          setMovementLog(data);
+      } catch (err) {
+          setError(err.message);
+      }
+  }, []);
 
   useEffect(() => {
+    const fetchVendors = async () => {
+      try {
+        const response = await fetch(`${API_URL}/vendors`);
+        if (!response.ok) throw new Error('Failed to fetch vendors');
+        const data = await response.json();
+        setVendors(data);
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    fetchVendors();
     fetchStockStatus(selectedDate);
-  }, [selectedDate, fetchStockStatus]);
+    fetchMovementLog();
+  }, [selectedDate, fetchStockStatus, fetchMovementLog]);
 
-  const handleStockChange = useCallback(async (id, value) => {
-    if (isNaN(value)) return;
-
-    const originalStock = [...stockItems];
-    setStockItems(prevItems =>
-      prevItems.map(item => (item.id === id ? { ...item, remaining_stock: value } : item))
-    );
-
+  const handleRecordMovement = useCallback(async (movementData) => {
     try {
-      await fetch(`${API_URL}/update-stock`, {
+      await fetch(`${API_URL}/record-movement`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, remainingStock: value, date: selectedDate }),
+        body: JSON.stringify(movementData),
       });
-      // Re-fetch to confirm and get updated alerts
       fetchStockStatus(selectedDate);
-    } catch (error) {
-      setError(`Failed to update stock. Reverting changes.`);
-      setStockItems(originalStock);
+      fetchMovementLog();
+    } catch (err) {
+      setError(`Failed to record movement: ${err.message}`);
     }
-  }, [stockItems, selectedDate, fetchStockStatus]);
+  }, [selectedDate, fetchStockStatus, fetchMovementLog]);
 
-  const handleGenerateInvoice = useCallback(async () => {
+  const handleGenerateInvoice = useCallback(async (vendorFilter) => {
     setIsLoading(true);
     setError(null);
     try {
-      const payload = { stockItems };
+      const payload = { stockItems, vendorFilter };
       const response = await fetch(`${API_URL}/generate-invoice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -79,12 +93,57 @@ export default function App() {
       }
       const result = await response.json();
       setInvoice(result.invoice);
-    } catch (error) {
-      setError(error.message);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setIsLoading(false);
     }
   }, [stockItems]);
+
+  const handleSaveInvoice = useCallback(async (invoiceData) => {
+      try {
+          const response = await fetch(`${API_URL}/save-invoice`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(invoiceData)
+          });
+          if (!response.ok) throw new Error('Failed to save invoice');
+          const data = await response.json();
+          alert('Invoice saved successfully!');
+          return data.invoiceId;
+      } catch (err) {
+          setError(err.message);
+          return null;
+      }
+  }, []);
+  
+  const handleStatusUpdate = useCallback(async (statusUpdateData) => {
+      try {
+          await fetch(`${API_URL}/update-invoice-status`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(statusUpdateData)
+          });
+           // After approving, refresh the stock status to see the new totals
+          if (statusUpdateData.newStatus === 'Approved') {
+              fetchStockStatus(selectedDate);
+              fetchMovementLog();
+          }
+      } catch (err) {
+          setError(err.message);
+      }
+  }, [selectedDate, fetchStockStatus, fetchMovementLog]);
+
+  const handleFetchLogs = useCallback(async (invoiceId) => {
+      try {
+          const response = await fetch(`${API_URL}/invoice-logs/${invoiceId}`);
+          if (!response.ok) throw new Error('Failed to fetch logs');
+          const data = await response.json();
+          setInvoiceLogs(prev => ({ ...prev, [invoiceId]: data }));
+      } catch (err) {
+          setError(err.message);
+      }
+  }, []);
 
   const handleNavigate = (page) => {
     setCurrentPage(page);
@@ -95,7 +154,7 @@ export default function App() {
       return (
         <LivePage
           stockItems={stockItems}
-          onStockChange={handleStockChange}
+          onRecordMovement={handleRecordMovement}
           selectedDate={selectedDate}
           setSelectedDate={setSelectedDate}
           isToday={selectedDate === getTodayDateString()}
@@ -103,7 +162,19 @@ export default function App() {
       );
     }
     if (currentPage === 'report') {
-      return <ReportPage invoice={invoice} onGenerate={handleGenerateInvoice} isLoading={isLoading} />;
+      return (
+        <ReportPage
+          invoice={invoice}
+          onGenerate={handleGenerateInvoice}
+          isLoading={isLoading}
+          vendors={vendors}
+          onSave={handleSaveInvoice}
+          onStatusUpdate={handleStatusUpdate}
+          movementLog={movementLog}
+          onFetchLogs={handleFetchLogs}
+          invoiceLogs={invoiceLogs}
+        />
+      );
     }
     return null;
   };

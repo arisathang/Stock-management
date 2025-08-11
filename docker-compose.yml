@@ -1,16 +1,14 @@
-# docker-compose.yml (Proxy Setup)
-# This version uses an Nginx proxy, mirroring your working project.
+# docker-compose.yml (Final Fix)
+# This version matches the working architecture from your capstone project.
 
 services:
-  # 1. Nginx Proxy Service (The new single entry point for the app)
+  # 1. Nginx Proxy Service
   proxy:
     image: nginx:alpine
     container_name: stock_proxy
     ports:
-      # Expose port 8000 on your Mac, which maps to port 80 in the proxy container.
       - "8000:80"
     volumes:
-      # Mount the Nginx configuration file into the container
       - ./nginx.dev.conf:/etc/nginx/nginx.conf
     depends_on:
       - backend
@@ -34,9 +32,7 @@ services:
   # 3. Backend Service
   backend:
     container_name: stock_backend
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: ./backend
     volumes:
       - ./backend:/app
     environment:
@@ -51,15 +47,12 @@ services:
   # 4. Frontend Service
   frontend:
     container_name: stock_frontend
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    build: ./frontend
     volumes:
       - ./frontend:/app
       - /app/node_modules
     environment:
       - CHOKIDAR_USEPOLLING=true
-      # The API URL is a relative path, handled by the proxy.
       - REACT_APP_API_URL=/api
     depends_on:
       - backend
