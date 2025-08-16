@@ -20,7 +20,7 @@ CREATE TABLE products (
     remaining_stock INT NOT NULL DEFAULT 0,
     min_stock INT NOT NULL,
     max_stock INT NOT NULL,
-    last_year_prediction INT NOT NULL,
+    prediction INT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -90,7 +90,7 @@ CREATE TABLE invoice_status_logs (
 -- =================================================================
 -- INSERT INITIAL DATA
 -- =================================================================
-INSERT INTO products (id, name, unit, image_url, remaining_stock, min_stock, max_stock, last_year_prediction) VALUES
+INSERT INTO products (id, name, unit, image_url, remaining_stock, min_stock, max_stock, prediction) VALUES
 ('item1', 'Chicken', 'kg', '/item1.jpg', 100, 50, 200, 150),
 ('item2', 'Potatoes', 'kg', '/item2.jpg', 80, 40, 150, 120),
 ('item3', 'Flour', 'kg', '/item3.jpg', 50, 25, 100, 75),

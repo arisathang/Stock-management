@@ -107,7 +107,7 @@ def get_stock_status():
         query = """
             SELECT 
                 p.id, p.name, p.unit, p.image_url, 
-                p.min_stock, p.max_stock, p.last_year_prediction,
+                p.min_stock, p.max_stock, p.prediction,
                 COALESCE((SELECT SUM(m.quantity) FROM stock_movements m WHERE m.product_id = p.id AND m.movement_date::date <= %s), 0) as remaining_stock,
                 COALESCE((SELECT SUM(m.quantity) FROM stock_movements m WHERE m.product_id = p.id AND m.movement_type = 'IN' AND m.movement_date::date = %s), 0) as daily_in,
                 COALESCE((SELECT SUM(m.quantity) FROM stock_movements m WHERE m.product_id = p.id AND m.movement_type != 'IN' AND m.movement_date::date = %s), 0) as daily_out

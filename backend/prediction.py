@@ -8,7 +8,7 @@ def calculate_orders(current_stock_levels, db_connection):
     items_to_order = []
 
     for item_data in current_stock_levels:
-        prediction = int(item_data['last_year_prediction'])
+        prediction = int(item_data['prediction'])
         remaining_stock = int(item_data['remaining_stock'])
         min_stock = int(item_data['min_stock'])
         max_stock = int(item_data['max_stock'])
