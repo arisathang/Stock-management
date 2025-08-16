@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { BarChart, FileText, RefreshCw, TrendingUp, Truck, Save, FileDown, History } from 'lucide-react';
+import { BarChart, FileText, RefreshCw, TrendingUp, Truck, Save, FileDown, History, DollarSign, Trash2, PlusCircle } from 'lucide-react';
 import Select from 'react-select';
 import { createRoot } from 'react-dom/client';
 import InvoicePDF from '../components/InvoicePDF';
+import SpendingBreakdownPDF from '../components/SpendingBreakdownPDF';
 
 // Helper function to calculate item cost
 const calculateItemCost = (quantity, item) => {
@@ -28,11 +29,13 @@ const calculateItemCost = (quantity, item) => {
 };
 
 
-const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onStatusUpdate, movementLog, onFetchLogs, invoiceLogs }) => {
+const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onUpdateInvoice, movementLog, onFetchLogs, invoiceLogs, dailySpending, onFetchSpendingBreakdown, onFetchVendorProducts }) => {
   const [editableInvoice, setEditableInvoice] = useState(null);
   const [vendorFilter, setVendorFilter] = useState([]);
   const [statusData, setStatusData] = useState({});
   const [visibleLogVendorId, setVisibleLogVendorId] = useState(null);
+  const [showAddItem, setShowAddItem] = useState(null);
+  const [vendorProductsCache, setVendorProductsCache] = useState({});
 
   useEffect(() => {
     setEditableInvoice(invoice);
@@ -50,17 +53,25 @@ const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onStatusU
   }, [invoice]);
 
   const handleSaveWrapper = async (vendorId, order) => {
-      const newInvoiceId = await onSave({
-          vendorId, 
-          ...statusData[vendorId], 
-          items: order.items, 
+      const invoiceStatusData = statusData[vendorId];
+      const payload = {
+          vendorId,
+          status: invoiceStatusData.status,
+          modifiedBy: invoiceStatusData.modifiedBy,
+          items: order.items,
           totalCost: order.subtotal + order.shippingCost
-      });
-      if (newInvoiceId) {
-          setStatusData(prev => ({
-              ...prev,
-              [vendorId]: { ...prev[vendorId], invoiceId: newInvoiceId }
-          }));
+      };
+
+      if (invoiceStatusData.invoiceId) {
+          await onUpdateInvoice({ ...payload, invoiceId: invoiceStatusData.invoiceId });
+      } else {
+          const newInvoiceId = await onSave(payload);
+          if (newInvoiceId) {
+              setStatusData(prev => ({
+                  ...prev,
+                  [vendorId]: { ...prev[vendorId], invoiceId: newInvoiceId }
+              }));
+          }
       }
   };
   
@@ -85,34 +96,60 @@ const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onStatusU
     setEditableInvoice(newInvoice);
   };
 
-  const handleStatusChange = async (vendorId, field, value) => {
-      const order = editableInvoice.vendorOrders[vendorId];
-      let currentInvoiceId = statusData[vendorId]?.invoiceId;
-      const oldStatus = statusData[vendorId]?.status;
-      const modifiedBy = field === 'modifiedBy' ? value : statusData[vendorId]?.modifiedBy;
-      const newStatus = field === 'status' ? value : oldStatus;
-
-      // If status is changed on an unsaved invoice, save it first to get an ID.
-      if (field === 'status' && !currentInvoiceId) {
-          const newId = await onSave({
-              vendorId, status: newStatus, modifiedBy,
-              items: order.items, totalCost: order.subtotal + order.shippingCost
-          });
-          if (newId) {
-              currentInvoiceId = newId;
-              // Log this initial status change
-              onStatusUpdate({ invoiceId: newId, oldStatus: 'Pending', newStatus, changedBy: modifiedBy });
-          }
-      } else if (field === 'status' && onStatusUpdate && currentInvoiceId) {
-          // If it already has an ID, just update the status
-          onStatusUpdate({ invoiceId: currentInvoiceId, oldStatus, newStatus, changedBy: modifiedBy });
-      }
-
-      // Update local UI state
+  const handleStatusChange = (vendorId, field, value) => {
       setStatusData(prev => ({
           ...prev,
-          [vendorId]: { ...prev[vendorId], [field]: value, invoiceId: currentInvoiceId || prev[vendorId].invoiceId }
+          [vendorId]: { ...prev[vendorId], [field]: value }
       }));
+  };
+
+  const handleRemoveItem = (vendorId, itemId) => {
+    const newInvoice = { ...editableInvoice };
+    const order = newInvoice.vendorOrders[vendorId];
+    order.items = order.items.filter(item => item.id !== itemId);
+    setEditableInvoice(newInvoice);
+  };
+
+  const handleAddItem = (vendorId, selectedProduct) => {
+    if (!selectedProduct) return;
+    const newInvoice = { ...editableInvoice };
+    const order = newInvoice.vendorOrders[vendorId];
+    
+    // Prevent adding duplicates
+    if (order.items.some(item => item.id === selectedProduct.value)) {
+        alert(`${selectedProduct.label} is already in the order.`);
+        return;
+    }
+
+    const productDetails = vendorProductsCache[vendorId].find(p => p.id === selectedProduct.value);
+
+    const newItem = {
+        id: productDetails.id,
+        name: productDetails.name,
+        unit: productDetails.unit,
+        quantity: 1, // Default quantity
+        price: parseFloat(productDetails.price),
+        bundles: productDetails.bundles,
+        cost: parseFloat(productDetails.price) // Initial cost is just the base price for qty 1
+    };
+    
+    order.items.push(newItem);
+    setEditableInvoice(newInvoice);
+    setShowAddItem(null); // Hide the dropdown after adding
+  };
+
+  const toggleAddItem = async (vendorId) => {
+    if (showAddItem === vendorId) {
+        setShowAddItem(null);
+    } else {
+        setShowAddItem(vendorId);
+        if (!vendorProductsCache[vendorId]) {
+            const products = await onFetchVendorProducts(vendorId);
+            if (products) {
+                setVendorProductsCache(prev => ({...prev, [vendorId]: products}));
+            }
+        }
+    }
   };
 
   const calculatedTotals = useMemo(() => {
@@ -138,10 +175,10 @@ const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onStatusU
 
   const vendorOptions = Array.isArray(vendors) ? vendors.map(v => ({ value: v.id, label: v.name })) : [];
 
-  const handlePdfClick = (order, vendorId) => {
+  const openPdfInNewWindow = (pdfComponent) => {
     const pdfWindow = window.open('', '_blank');
     if (pdfWindow) {
-        pdfWindow.document.write('<html><head><title>Print Invoice</title>');
+        pdfWindow.document.write('<html><head><title>Print View</title>');
         pdfWindow.document.write('<script src="https://cdn.tailwindcss.com"></script>');
         pdfWindow.document.write('</head><body><div id="pdf-root"></div></body></html>');
         pdfWindow.document.close();
@@ -149,7 +186,7 @@ const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onStatusU
         const pdfRootEl = pdfWindow.document.getElementById('pdf-root');
         if (pdfRootEl) {
             const root = createRoot(pdfRootEl);
-            root.render(<InvoicePDF order={order} vendorId={vendorId} statusData={statusData} />);
+            root.render(pdfComponent);
             setTimeout(() => {
                 pdfWindow.print();
                 pdfWindow.close();
@@ -158,11 +195,49 @@ const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onStatusU
     }
   };
 
+  const handlePdfClick = (order, vendorId) => {
+    openPdfInNewWindow(<InvoicePDF order={order} vendorId={vendorId} statusData={statusData} />);
+  };
+
+  const handlePrintBreakdown = async (date) => {
+    const breakdownData = await onFetchSpendingBreakdown(date);
+    if (breakdownData) {
+        openPdfInNewWindow(<SpendingBreakdownPDF breakdownData={breakdownData} date={date} />);
+    }
+  };
+
   return (
     <div className="bg-gray-100 min-h-screen p-6">
       <header className="mb-6">
         <h1 className="text-3xl font-bold text-gray-800">Daily Report & Analysis</h1>
       </header>
+
+      <section className="mb-8">
+        <h2 className="text-2xl font-bold text-gray-700 mb-4 flex items-center"><DollarSign className="mr-3" />Daily Spending Summary</h2>
+        <div className="bg-white p-6 rounded-lg shadow-md">
+            {Array.isArray(dailySpending) && dailySpending.length > 0 ? (
+                <ul className="space-y-2">
+                    {dailySpending.map(day => (
+                        <li key={day.invoice_date} className="flex justify-between items-center text-gray-700 border-b pb-2">
+                            <span>{new Date(day.invoice_date).toLocaleDateString()}</span>
+                            <div className="flex items-center space-x-4">
+                                <span className="font-bold text-lg">${parseFloat(day.total_spent).toFixed(2)}</span>
+                                <button 
+                                    onClick={() => handlePrintBreakdown(day.invoice_date)}
+                                    className="p-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
+                                    title="Print Breakdown"
+                                >
+                                    <FileDown size={16}/>
+                                </button>
+                            </div>
+                        </li>
+                    ))}
+                </ul>
+            ) : (
+                <p className="text-gray-500">No approved spending recorded for today.</p>
+            )}
+        </div>
+      </section>
       
       <section className="mb-8 bg-white p-6 rounded-lg shadow-md">
         <h2 className="text-2xl font-bold text-gray-700 mb-4 flex items-center"><BarChart className="mr-3" />Order Generation</h2>
@@ -235,18 +310,35 @@ const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onStatusU
 
                   <ul className="mt-2 space-y-2 text-gray-600">
                     {order.items.map(item => (
-                      <li key={item.id} className="flex justify-between items-center text-sm">
+                      <li key={item.id} className="flex justify-between items-center text-sm group">
                         <span>{item.name} ({item.unit})</span>
-                        <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2">
                             <input type="number" value={item.quantity} onChange={(e) => handleQuantityChange(vendorId, item.id, parseInt(e.target.value, 10) || 0)} className="w-20 text-center p-1 border rounded-md"/>
                             <span className="font-medium w-20 text-right">${item.cost.toFixed(2)}</span>
+                            <button onClick={() => handleRemoveItem(vendorId, item.id)} className="text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
                         </div>
                       </li>
                     ))}
                   </ul>
+                  <div className="mt-4">
+                    <button onClick={() => toggleAddItem(vendorId)} className="flex items-center text-sm text-indigo-600 hover:text-indigo-800">
+                        <PlusCircle size={16} className="mr-2"/> Add Item
+                    </button>
+                    {showAddItem === vendorId && (
+                        <div className="mt-2">
+                            <Select
+                                options={vendorProductsCache[vendorId]?.map(p => ({value: p.id, label: p.name})) || []}
+                                onChange={(selected) => handleAddItem(vendorId, selected)}
+                                placeholder="Select an item to add..."
+                                isLoading={!vendorProductsCache[vendorId]}
+                            />
+                        </div>
+                    )}
+                  </div>
                   <div className="mt-4 text-sm space-y-2 text-right">
                       {order.bundleSavings > 0 && <div className="flex justify-end items-center text-green-600"><TrendingUp size={16} className="mr-2"/><span>Bundle Savings: <strong>${order.bundleSavings.toFixed(2)}</strong></span></div>}
                       <div className={`flex justify-end items-center ${order.shippingCost === 0 ? 'text-green-600' : 'text-red-600'}`}><Truck size={16} className="mr-2"/><span>Shipping Fee: <strong>${order.shippingCost.toFixed(2)}</strong></span></div>
+                      <div className="font-bold text-lg text-gray-800 pt-2 border-t mt-2">Vendor Total: ${(order.subtotal + order.shippingCost).toFixed(2)}</div>
                   </div>
                 </div>
               ))}
@@ -272,7 +364,9 @@ const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onStatusU
                             <th className="p-2">Item</th>
                             <th className="p-2">Type</th>
                             <th className="p-2 text-right">Quantity</th>
+                            <th className="p-2 text-right">Total Cost</th>
                             <th className="p-2">Description</th>
+                            <th className="p-2">Approved By</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -291,7 +385,11 @@ const ReportPage = ({ invoice, onGenerate, isLoading, vendors, onSave, onStatusU
                                 <td className={`p-2 text-right font-bold ${log.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
                                     {log.quantity}
                                 </td>
+                                <td className="p-2 text-right">
+                                    {log.total_cost ? `$${parseFloat(log.total_cost).toFixed(2)}` : 'N/A'}
+                                </td>
                                 <td className="p-2">{log.description}</td>
+                                <td className="p-2">{log.approved_by || 'N/A'}</td>
                             </tr>
                         ))}
                     </tbody>

@@ -69,6 +69,7 @@ CREATE TABLE stock_movements (
     id SERIAL PRIMARY KEY,
     product_id VARCHAR(255) NOT NULL,
     quantity INT NOT NULL,
+    total_cost NUMERIC(10, 2) DEFAULT 0,
     movement_type VARCHAR(50) NOT NULL,
     description TEXT,
     movement_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -150,10 +151,10 @@ INSERT INTO vendor_products (vendor_id, product_id, price, bundles) VALUES
 ('vendor4', 'item9', 1.50, '[{"quantity": 100, "price": 140}]'),
 ('vendor4', 'item10', 0.05, '[{"quantity": 2000, "price": 95}]');
 
-INSERT INTO stock_movements (product_id, quantity, movement_type, description) VALUES
-('item1', 50, 'IN', 'Received from Poultry King order #PK101'),
-('item1', -15, 'OUT', 'Used for daily sales'),
-('item2', -5, 'WASTE', 'Spoilage');
+INSERT INTO stock_movements (product_id, quantity, movement_type, description, total_cost) VALUES
+('item1', 50, 'IN', 'Received from Poultry King order #PK101', 425.00),
+('item1', -15, 'OUT', 'Used for daily sales', 0),
+('item2', -5, 'WASTE', 'Spoilage', 0);
 
 
 -- =================================================================
@@ -174,22 +175,22 @@ INSERT INTO stock_movements (product_id, quantity, movement_type, description, m
 ('item10', 1500, 'IN', 'Initial Stock', '2025-07-01 08:00:00');
 
 -- Step 2: Simulate daily usage (stock out) and deliveries (stock in)
-INSERT INTO stock_movements (product_id, quantity, movement_type, description, movement_date) VALUES
-('item1', -20, 'OUT', 'Daily Sales', '2025-07-01 22:00:00'), ('item2', -15, 'OUT', 'Daily Sales', '2025-07-01 22:00:00'),
-('item1', -22, 'OUT', 'Daily Sales', '2025-07-02 22:00:00'), ('item2', -18, 'OUT', 'Daily Sales', '2025-07-02 22:00:00'),
-('item1', -18, 'OUT', 'Daily Sales', '2025-07-03 22:00:00'), ('item2', -12, 'OUT', 'Daily Sales', '2025-07-03 22:00:00'),
-('item1', -25, 'OUT', 'Daily Sales', '2025-07-04 22:00:00'), ('item2', -20, 'OUT', 'Daily Sales', '2025-07-04 22:00:00'),
-('item1', -30, 'OUT', 'Daily Sales', '2025-07-05 22:00:00'), ('item2', -25, 'OUT', 'Daily Sales', '2025-07-05 22:00:00'),
-('item1', 150, 'IN', 'Delivery from Poultry King', '2025-07-07 09:00:00'), ('item2', 120, 'IN', 'Delivery from Farm Fresh', '2025-07-07 09:00:00'),
-('item1', -21, 'OUT', 'Daily Sales', '2025-07-08 22:00:00'), ('item2', -17, 'OUT', 'Daily Sales', '2025-07-08 22:00:00'),
-('item1', -23, 'OUT', 'Daily Sales', '2025-07-09 22:00:00'), ('item2', -19, 'OUT', 'Daily Sales', '2025-07-09 22:00:00'),
-('item1', -19, 'OUT', 'Daily Sales', '2025-07-10 22:00:00'), ('item2', -15, 'OUT', 'Daily Sales', '2025-07-10 22:00:00'),
-('item1', -28, 'OUT', 'Daily Sales', '2025-07-11 22:00:00'), ('item2', -22, 'OUT', 'Daily Sales', '2025-07-11 22:00:00'),
-('item1', -35, 'OUT', 'Daily Sales', '2025-07-12 22:00:00'), ('item2', -28, 'OUT', 'Daily Sales', '2025-07-12 22:00:00'),
-('item1', 150, 'IN', 'Delivery from Poultry King', '2025-07-14 09:00:00'), ('item2', 120, 'IN', 'Delivery from Farm Fresh', '2025-07-14 09:00:00'),
-('item1', -20, 'OUT', 'Daily Sales', '2025-07-15 22:00:00'), ('item2', -16, 'OUT', 'Daily Sales', '2025-07-15 22:00:00'),
-('item1', -18, 'OUT', 'Daily Sales', '2025-08-10 22:00:00'), ('item2', -14, 'OUT', 'Daily Sales', '2025-08-10 22:00:00'),
-('item1', -19, 'OUT', 'Daily Sales', '2025-08-11 22:00:00'), ('item2', -16, 'OUT', 'Daily Sales', '2025-08-11 22:00:00');
+INSERT INTO stock_movements (product_id, quantity, movement_type, description, movement_date, total_cost) VALUES
+('item1', -20, 'OUT', 'Daily Sales', '2025-07-01 22:00:00', 0), ('item2', -15, 'OUT', 'Daily Sales', '2025-07-01 22:00:00', 0),
+('item1', -22, 'OUT', 'Daily Sales', '2025-07-02 22:00:00', 0), ('item2', -18, 'OUT', 'Daily Sales', '2025-07-02 22:00:00', 0),
+('item1', -18, 'OUT', 'Daily Sales', '2025-07-03 22:00:00', 0), ('item2', -12, 'OUT', 'Daily Sales', '2025-07-03 22:00:00', 0),
+('item1', -25, 'OUT', 'Daily Sales', '2025-07-04 22:00:00', 0), ('item2', -20, 'OUT', 'Daily Sales', '2025-07-04 22:00:00', 0),
+('item1', -30, 'OUT', 'Daily Sales', '2025-07-05 22:00:00', 0), ('item2', -25, 'OUT', 'Daily Sales', '2025-07-05 22:00:00', 0),
+('item1', 150, 'IN', 'Delivery from Poultry King', '2025-07-07 09:00:00', 1275.00), ('item2', 120, 'IN', 'Delivery from Farm Fresh', '2025-07-07 09:00:00', 144.00),
+('item1', -21, 'OUT', 'Daily Sales', '2025-07-08 22:00:00', 0), ('item2', -17, 'OUT', 'Daily Sales', '2025-07-08 22:00:00', 0),
+('item1', -23, 'OUT', 'Daily Sales', '2025-07-09 22:00:00', 0), ('item2', -19, 'OUT', 'Daily Sales', '2025-07-09 22:00:00', 0),
+('item1', -19, 'OUT', 'Daily Sales', '2025-07-10 22:00:00', 0), ('item2', -15, 'OUT', 'Daily Sales', '2025-07-10 22:00:00', 0),
+('item1', -28, 'OUT', 'Daily Sales', '2025-07-11 22:00:00', 0), ('item2', -22, 'OUT', 'Daily Sales', '2025-07-11 22:00:00', 0),
+('item1', -35, 'OUT', 'Daily Sales', '2025-07-12 22:00:00', 0), ('item2', -28, 'OUT', 'Daily Sales', '2025-07-12 22:00:00', 0),
+('item1', 150, 'IN', 'Delivery from Poultry King', '2025-07-14 09:00:00', 1275.00), ('item2', 120, 'IN', 'Delivery from Farm Fresh', '2025-07-14 09:00:00', 144.00),
+('item1', -20, 'OUT', 'Daily Sales', '2025-07-15 22:00:00', 0), ('item2', -16, 'OUT', 'Daily Sales', '2025-07-15 22:00:00', 0),
+('item1', -18, 'OUT', 'Daily Sales', '2025-08-10 22:00:00', 0), ('item2', -14, 'OUT', 'Daily Sales', '2025-08-10 22:00:00', 0),
+('item1', -19, 'OUT', 'Daily Sales', '2025-08-11 22:00:00', 0), ('item2', -16, 'OUT', 'Daily Sales', '2025-08-11 22:00:00', 0);
 
 -- =================================================================
 -- Step 3: Calculate and update the final remaining_stock in the products table

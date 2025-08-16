@@ -19,6 +19,7 @@ export default function App() {
   const [vendors, setVendors] = useState([]);
   const [movementLog, setMovementLog] = useState([]);
   const [invoiceLogs, setInvoiceLogs] = useState({});
+  const [dailySpending, setDailySpending] = useState([]);
 
   const fetchStockStatus = useCallback(async (date) => {
     try {
@@ -47,6 +48,17 @@ export default function App() {
       }
   }, []);
 
+  const fetchDailySpending = useCallback(async () => {
+      try {
+          const response = await fetch(`${API_URL}/daily-spending`);
+          if (!response.ok) throw new Error('Failed to fetch daily spending');
+          const data = await response.json();
+          setDailySpending(data);
+      } catch (err) {
+          setError(err.message);
+      }
+  }, []);
+
   useEffect(() => {
     const fetchVendors = async () => {
       try {
@@ -61,7 +73,8 @@ export default function App() {
     fetchVendors();
     fetchStockStatus(selectedDate);
     fetchMovementLog();
-  }, [selectedDate, fetchStockStatus, fetchMovementLog]);
+    fetchDailySpending();
+  }, [selectedDate, fetchStockStatus, fetchMovementLog, fetchDailySpending]);
 
   const handleRecordMovement = useCallback(async (movementData) => {
     try {
@@ -110,29 +123,36 @@ export default function App() {
           if (!response.ok) throw new Error('Failed to save invoice');
           const data = await response.json();
           alert('Invoice saved successfully!');
+          if (invoiceData.status === 'Approved') {
+              fetchStockStatus(selectedDate);
+              fetchMovementLog();
+              fetchDailySpending();
+          }
           return data.invoiceId;
       } catch (err) {
           setError(err.message);
           return null;
       }
-  }, []);
+  }, [selectedDate, fetchStockStatus, fetchMovementLog, fetchDailySpending]);
   
-  const handleStatusUpdate = useCallback(async (statusUpdateData) => {
+  const handleUpdateInvoice = useCallback(async (invoiceData) => {
       try {
-          await fetch(`${API_URL}/update-invoice-status`, {
+          const response = await fetch(`${API_URL}/update-invoice/${invoiceData.invoiceId}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(statusUpdateData)
+              body: JSON.stringify(invoiceData)
           });
-           // The fix is here: After approving, refresh the stock status and movement log
-          if (statusUpdateData.newStatus === 'Approved') {
+          if (!response.ok) throw new Error('Failed to update invoice');
+          alert('Invoice updated successfully!');
+          if (invoiceData.status === 'Approved') {
               fetchStockStatus(selectedDate);
               fetchMovementLog();
+              fetchDailySpending();
           }
       } catch (err) {
-          setError(err.message);
+          setError(`Failed to update invoice: ${err.message}`);
       }
-  }, [selectedDate, fetchStockStatus, fetchMovementLog]);
+  }, [selectedDate, fetchStockStatus, fetchMovementLog, fetchDailySpending]);
 
   const handleFetchLogs = useCallback(async (invoiceId) => {
       try {
@@ -143,6 +163,28 @@ export default function App() {
       } catch (err) {
           setError(err.message);
       }
+  }, []);
+
+  const handleFetchSpendingBreakdown = useCallback(async (date) => {
+    try {
+        const response = await fetch(`${API_URL}/daily-spending-breakdown?date=${date}`);
+        if (!response.ok) throw new Error('Failed to fetch spending breakdown');
+        return await response.json();
+    } catch (err) {
+        setError(err.message);
+        return null;
+    }
+  }, []);
+
+  const handleFetchVendorProducts = useCallback(async (vendorId) => {
+    try {
+        const response = await fetch(`${API_URL}/vendor-products/${vendorId}`);
+        if (!response.ok) throw new Error('Failed to fetch vendor products');
+        return await response.json();
+    } catch (err) {
+        setError(err.message);
+        return null;
+    }
   }, []);
 
   const handleNavigate = (page) => {
@@ -169,10 +211,13 @@ export default function App() {
           isLoading={isLoading}
           vendors={vendors}
           onSave={handleSaveInvoice}
-          onStatusUpdate={handleStatusUpdate}
+          onUpdateInvoice={handleUpdateInvoice}
           movementLog={movementLog}
           onFetchLogs={handleFetchLogs}
           invoiceLogs={invoiceLogs}
+          dailySpending={dailySpending}
+          onFetchSpendingBreakdown={handleFetchSpendingBreakdown}
+          onFetchVendorProducts={handleFetchVendorProducts}
         />
       );
     }
