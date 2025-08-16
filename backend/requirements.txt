@@ -3,3 +3,5 @@ flask-cors
 flask-jwt-extended
 psycopg2-binary
 apscheduler
+google-generativeai
+pandas

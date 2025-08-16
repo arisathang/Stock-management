@@ -1,6 +1,3 @@
-# server.py (Complete)
-# This version contains all required API endpoints with the correct routes.
-
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import psycopg2, os, json
@@ -26,27 +23,51 @@ def get_db_connection():
 
 @app.route('/stock-status', methods=['GET'])
 def get_stock_status():
-    record_date_str = request.args.get('date')
+    """
+    Fetches stock levels and daily movements for a given date.
+    """
+    record_date_str = request.args.get('date', date.today().isoformat())
+    
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        if record_date_str:
-            query = """
-                SELECT p.id, p.name, p.unit, p.image_url, 
-                COALESCE(h.remaining_stock, p.remaining_stock) as remaining_stock, 
-                p.min_stock, p.max_stock, p.last_year_prediction
-                FROM products p
-                LEFT JOIN stock_history h ON p.id = h.product_id AND h.record_date = %s
-                ORDER BY p.name;
-            """
-            cur.execute(query, (record_date_str,))
-        else:
-            query = "SELECT id, name, unit, image_url, remaining_stock, min_stock, max_stock, last_year_prediction FROM products ORDER BY name;"
-            cur.execute(query)
+        
+        # This single, powerful query does everything:
+        # 1. Calculates the total remaining stock up to the selected date.
+        # 2. Calculates the total stock IN for the selected date.
+        # 3. Calculates the total stock OUT for the selected date.
+        query = """
+            SELECT 
+                p.id, p.name, p.unit, p.image_url, 
+                p.min_stock, p.max_stock, p.last_year_prediction,
+                COALESCE(
+                    (SELECT SUM(m.quantity) 
+                     FROM stock_movements m 
+                     WHERE m.product_id = p.id AND m.movement_date::date <= %s),
+                    0
+                ) as remaining_stock,
+                COALESCE(
+                    (SELECT SUM(m.quantity) 
+                     FROM stock_movements m 
+                     WHERE m.product_id = p.id AND m.movement_type = 'IN' AND m.movement_date::date = %s),
+                    0
+                ) as daily_in,
+                COALESCE(
+                    (SELECT SUM(m.quantity) 
+                     FROM stock_movements m 
+                     WHERE m.product_id = p.id AND m.movement_type != 'IN' AND m.movement_date::date = %s),
+                    0
+                ) as daily_out
+            FROM products p
+            ORDER BY p.name;
+        """
+        cur.execute(query, (record_date_str, record_date_str, record_date_str))
+
         products = [dict(row) for row in cur.fetchall()]
         cur.close()
         alerts = generate_stock_alerts(products)
         conn.close()
+        
         return jsonify({"stockItems": products, "alerts": alerts})
     except Exception as e:
         print(f"Error fetching stock status: {e}")
@@ -129,7 +150,7 @@ def generate_invoice():
                 cur.execute('SELECT price, bundles FROM vendor_products WHERE vendor_id = %s AND product_id = %s;', (vendor_id, item['id']))
                 pricing_info = dict(cur.fetchone())
                 cur.close()
-                vendor_orders[vendor_id]['items'].append({"id": item['id'], "name": item['name'], "unit": item['unit'], "quantity": item['order_amount'], "cost": float(best_option['cost']), "price": float(pricing_info['price']), "bundles": pricing_info['bundles']})
+                vendor_orders[vendor_id]['items'].append({"id": item['id'], "name": item['name'], "unit": item['unit'], "quantity": item['order_amount'], "cost": float(best_option['cost']), "price": float(pricing_info['price']), "bundles": pricing_info['bundles'], "prediction": item['prediction'], "remaining_stock": item['remaining_stock']})
                 vendor_orders[vendor_id]['bundleSavings'] += float(best_option['savings'])
         total_cost = 0; total_bundle_savings = 0; total_shipping_savings = 0
         for vendor_id, order in vendor_orders.items():

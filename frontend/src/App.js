@@ -124,7 +124,7 @@ export default function App() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(statusUpdateData)
           });
-           // After approving, refresh the stock status to see the new totals
+           // The fix is here: After approving, refresh the stock status and movement log
           if (statusUpdateData.newStatus === 'Approved') {
               fetchStockStatus(selectedDate);
               fetchMovementLog();

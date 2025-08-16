@@ -1,6 +1,3 @@
-# report.py (Fixed)
-# Logic for generating reports and alerts.
-
 def generate_stock_alerts(products, db_connection=None):
     """
     Checks current stock against min/max levels and generates alerts from a given product list.

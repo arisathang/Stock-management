@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { ArrowDownRight, Calendar } from 'lucide-react';
+import { ArrowDownRight, Calendar, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 
-// The fix is here: These helper functions and objects were missing.
 const getStockStatus = (item) => {
   if (item.remaining_stock < item.min_stock) return 'understock';
   if (item.remaining_stock > item.max_stock) return 'overstock';
@@ -43,6 +42,17 @@ const StockItemCard = ({ item, onRecordMovement, isEditable }) => {
         <div className="text-2xl font-bold text-gray-700 my-2">
             {item.remaining_stock} <span className="text-lg font-medium text-gray-500">{item.unit}</span>
         </div>
+        
+        {/* Daily Stock In/Out Display */}
+        <div className="flex justify-between text-sm mb-2">
+            <span className="flex items-center text-green-600 font-medium">
+                <ArrowUpRight size={16} className="mr-1"/> In: {item.daily_in}
+            </span>
+            <span className="flex items-center text-red-600 font-medium">
+                <ArrowDownLeft size={16} className="mr-1"/> Out: {Math.abs(item.daily_out)}
+            </span>
+        </div>
+
         <p className={`text-sm font-medium ${styles.textColor}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</p>
       </div>
       <div className="mt-4">

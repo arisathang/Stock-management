@@ -154,3 +154,49 @@ INSERT INTO stock_movements (product_id, quantity, movement_type, description) V
 ('item1', 50, 'IN', 'Received from Poultry King order #PK101'),
 ('item1', -15, 'OUT', 'Used for daily sales'),
 ('item2', -5, 'WASTE', 'Spoilage');
+
+
+-- =================================================================
+-- POPULATE STOCK MOVEMENTS
+-- =================================================================
+
+-- Step 1: Set the initial stock on July 1st, 2025
+INSERT INTO stock_movements (product_id, quantity, movement_type, description, movement_date) VALUES
+('item1', 150, 'IN', 'Initial Stock', '2025-07-01 08:00:00'),
+('item2', 120, 'IN', 'Initial Stock', '2025-07-01 08:00:00'),
+('item3', 75, 'IN', 'Initial Stock', '2025-07-01 08:00:00'),
+('item4', 30, 'IN', 'Initial Stock', '2025-07-01 08:00:00'),
+('item5', 40, 'IN', 'Initial Stock', '2025-07-01 08:00:00'),
+('item6', 40, 'IN', 'Initial Stock', '2025-07-01 08:00:00'),
+('item7', 90, 'IN', 'Initial Stock', '2025-07-01 08:00:00'),
+('item8', 2000, 'IN', 'Initial Stock', '2025-07-01 08:00:00'),
+('item9', 80, 'IN', 'Initial Stock', '2025-07-01 08:00:00'),
+('item10', 1500, 'IN', 'Initial Stock', '2025-07-01 08:00:00');
+
+-- Step 2: Simulate daily usage (stock out) and deliveries (stock in)
+INSERT INTO stock_movements (product_id, quantity, movement_type, description, movement_date) VALUES
+('item1', -20, 'OUT', 'Daily Sales', '2025-07-01 22:00:00'), ('item2', -15, 'OUT', 'Daily Sales', '2025-07-01 22:00:00'),
+('item1', -22, 'OUT', 'Daily Sales', '2025-07-02 22:00:00'), ('item2', -18, 'OUT', 'Daily Sales', '2025-07-02 22:00:00'),
+('item1', -18, 'OUT', 'Daily Sales', '2025-07-03 22:00:00'), ('item2', -12, 'OUT', 'Daily Sales', '2025-07-03 22:00:00'),
+('item1', -25, 'OUT', 'Daily Sales', '2025-07-04 22:00:00'), ('item2', -20, 'OUT', 'Daily Sales', '2025-07-04 22:00:00'),
+('item1', -30, 'OUT', 'Daily Sales', '2025-07-05 22:00:00'), ('item2', -25, 'OUT', 'Daily Sales', '2025-07-05 22:00:00'),
+('item1', 150, 'IN', 'Delivery from Poultry King', '2025-07-07 09:00:00'), ('item2', 120, 'IN', 'Delivery from Farm Fresh', '2025-07-07 09:00:00'),
+('item1', -21, 'OUT', 'Daily Sales', '2025-07-08 22:00:00'), ('item2', -17, 'OUT', 'Daily Sales', '2025-07-08 22:00:00'),
+('item1', -23, 'OUT', 'Daily Sales', '2025-07-09 22:00:00'), ('item2', -19, 'OUT', 'Daily Sales', '2025-07-09 22:00:00'),
+('item1', -19, 'OUT', 'Daily Sales', '2025-07-10 22:00:00'), ('item2', -15, 'OUT', 'Daily Sales', '2025-07-10 22:00:00'),
+('item1', -28, 'OUT', 'Daily Sales', '2025-07-11 22:00:00'), ('item2', -22, 'OUT', 'Daily Sales', '2025-07-11 22:00:00'),
+('item1', -35, 'OUT', 'Daily Sales', '2025-07-12 22:00:00'), ('item2', -28, 'OUT', 'Daily Sales', '2025-07-12 22:00:00'),
+('item1', 150, 'IN', 'Delivery from Poultry King', '2025-07-14 09:00:00'), ('item2', 120, 'IN', 'Delivery from Farm Fresh', '2025-07-14 09:00:00'),
+('item1', -20, 'OUT', 'Daily Sales', '2025-07-15 22:00:00'), ('item2', -16, 'OUT', 'Daily Sales', '2025-07-15 22:00:00'),
+('item1', -18, 'OUT', 'Daily Sales', '2025-08-10 22:00:00'), ('item2', -14, 'OUT', 'Daily Sales', '2025-08-10 22:00:00'),
+('item1', -19, 'OUT', 'Daily Sales', '2025-08-11 22:00:00'), ('item2', -16, 'OUT', 'Daily Sales', '2025-08-11 22:00:00');
+
+-- =================================================================
+-- Step 3: Calculate and update the final remaining_stock in the products table
+-- =================================================================
+UPDATE products p
+SET remaining_stock = COALESCE((
+    SELECT SUM(m.quantity)
+    FROM stock_movements m
+    WHERE m.product_id = p.id
+), 0);
