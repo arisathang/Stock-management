@@ -3,10 +3,14 @@ from flask_cors import CORS
 import psycopg2, os, json
 import psycopg2.extras
 from datetime import date, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from prediction import calculate_orders
-from optimization import find_best_vendor_for_item
+# from optimization import find_best_vendor_for_item
 from report import generate_stock_alerts
+from llm_integration import calculate_orders_with_ai, generate_optimized_invoice_with_ai
 
 app = Flask(__name__)
 CORS(app)
@@ -208,6 +212,46 @@ def get_vendor_products(vendor_id):
         print(f"Error fetching vendor products: {e}")
         return jsonify({"error": "Failed to fetch vendor products"}), 500
 
+# @app.route('/generate-invoice', methods=['POST'])
+# def generate_invoice():
+#     try:
+#         data = request.json
+#         current_stock_levels = data['stockItems']
+#         vendor_filter = data.get('vendorFilter', [])
+#         conn = get_db_connection()
+#         items_to_order = calculate_orders(current_stock_levels, conn)
+#         vendor_orders = {}
+#         for item in items_to_order:
+#             best_option = find_best_vendor_for_item(item, conn, vendor_filter)
+#             if best_option and best_option['vendor_id']:
+#                 vendor_id = best_option['vendor_id']
+#                 if vendor_id not in vendor_orders:
+#                     cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+#                     cur.execute('SELECT name, shipping_cost, free_shipping_threshold FROM vendors WHERE id = %s;', (vendor_id,))
+#                     vendor_info = dict(cur.fetchone())
+#                     cur.close()
+#                     vendor_orders[vendor_id] = {"vendorName": vendor_info['name'], "items": [], "subtotal": 0, "bundleSavings": 0, "shippingCost": float(vendor_info['shipping_cost']), "originalShippingCost": float(vendor_info['shipping_cost']), "freeShippingThreshold": float(vendor_info['free_shipping_threshold'])}
+#                 cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+#                 cur.execute('SELECT price, bundles FROM vendor_products WHERE vendor_id = %s AND product_id = %s;', (vendor_id, item['id']))
+#                 pricing_info = dict(cur.fetchone())
+#                 cur.close()
+#                 vendor_orders[vendor_id]['items'].append({"id": item['id'], "name": item['name'], "unit": item['unit'], "quantity": item['order_amount'], "cost": float(best_option['cost']), "price": float(pricing_info['price']), "bundles": pricing_info['bundles'], "prediction": item['prediction'], "remaining_stock": item['remaining_stock']})
+#                 vendor_orders[vendor_id]['bundleSavings'] += float(best_option['savings'])
+#         total_cost = 0; total_bundle_savings = 0; total_shipping_savings = 0
+#         for vendor_id, order in vendor_orders.items():
+#             order['subtotal'] = sum(item['cost'] for item in order['items'])
+#             if order['subtotal'] >= order['freeShippingThreshold']:
+#                 order['shippingCost'] = 0
+#                 total_shipping_savings += order['originalShippingCost']
+#             total_cost += order['subtotal'] + order['shippingCost']
+#             total_bundle_savings += order['bundleSavings']
+#         invoice = {"vendorOrders": vendor_orders, "totalCost": total_cost, "totalBundleSavings": total_bundle_savings, "totalShippingSavings": total_shipping_savings, "totalSavings": total_bundle_savings + total_shipping_savings}
+#         conn.close()
+#         return jsonify({"invoice": invoice})
+#     except Exception as e:
+#         print(f"Error generating invoice: {e}")
+#         return jsonify({"error": "Failed to generate invoice"}), 500
+    
 @app.route('/generate-invoice', methods=['POST'])
 def generate_invoice():
     try:
@@ -215,38 +259,170 @@ def generate_invoice():
         current_stock_levels = data['stockItems']
         vendor_filter = data.get('vendorFilter', [])
         conn = get_db_connection()
+        
+        # 1. Use the ORIGINAL rule-based function for prediction
         items_to_order = calculate_orders(current_stock_levels, conn)
+        
+        # 2. Use the NEW AI-powered function to generate an optimized purchasing plan
+        optimized_plan = generate_optimized_invoice_with_ai(items_to_order, conn, vendor_filter)
+
+        # 3. Structure the AI's plan into the final invoice format
         vendor_orders = {}
-        for item in items_to_order:
-            best_option = find_best_vendor_for_item(item, conn, vendor_filter)
-            if best_option and best_option['vendor_id']:
-                vendor_id = best_option['vendor_id']
-                if vendor_id not in vendor_orders:
-                    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-                    cur.execute('SELECT name, shipping_cost, free_shipping_threshold FROM vendors WHERE id = %s;', (vendor_id,))
-                    vendor_info = dict(cur.fetchone())
-                    cur.close()
-                    vendor_orders[vendor_id] = {"vendorName": vendor_info['name'], "items": [], "subtotal": 0, "bundleSavings": 0, "shippingCost": float(vendor_info['shipping_cost']), "originalShippingCost": float(vendor_info['shipping_cost']), "freeShippingThreshold": float(vendor_info['free_shipping_threshold'])}
-                cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-                cur.execute('SELECT price, bundles FROM vendor_products WHERE vendor_id = %s AND product_id = %s;', (vendor_id, item['id']))
+        total_cost = 0
+        total_bundle_savings = 0 
+        total_shipping_savings = 0
+
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+        for vendor_id, plan in optimized_plan.items():
+            cur.execute('SELECT name, shipping_cost, free_shipping_threshold FROM vendors WHERE id = %s;', (vendor_id,))
+            vendor_info = dict(cur.fetchone())
+            
+            vendor_orders[vendor_id] = {
+                "vendorName": vendor_info['name'],
+                "items": [],
+                "subtotal": 0,
+                "bundleSavings": 0,
+                "shippingCost": float(vendor_info['shipping_cost']),
+                "originalShippingCost": float(vendor_info['shipping_cost']),
+                "freeShippingThreshold": float(vendor_info['free_shipping_threshold'])
+            }
+
+            subtotal = 0
+            for item_plan in plan['items']:
+                original_item = next((item for item in items_to_order if item['id'] == item_plan['product_id']), None)
+                if not original_item: continue
+
+                cur.execute('SELECT price, bundles FROM vendor_products WHERE vendor_id = %s AND product_id = %s;', (vendor_id, item_plan['product_id']))
                 pricing_info = dict(cur.fetchone())
-                cur.close()
-                vendor_orders[vendor_id]['items'].append({"id": item['id'], "name": item['name'], "unit": item['unit'], "quantity": item['order_amount'], "cost": float(best_option['cost']), "price": float(pricing_info['price']), "bundles": pricing_info['bundles'], "prediction": item['prediction'], "remaining_stock": item['remaining_stock']})
-                vendor_orders[vendor_id]['bundleSavings'] += float(best_option['savings'])
-        total_cost = 0; total_bundle_savings = 0; total_shipping_savings = 0
-        for vendor_id, order in vendor_orders.items():
-            order['subtotal'] = sum(item['cost'] for item in order['items'])
-            if order['subtotal'] >= order['freeShippingThreshold']:
-                order['shippingCost'] = 0
-                total_shipping_savings += order['originalShippingCost']
-            total_cost += order['subtotal'] + order['shippingCost']
-            total_bundle_savings += order['bundleSavings']
-        invoice = {"vendorOrders": vendor_orders, "totalCost": total_cost, "totalBundleSavings": total_bundle_savings, "totalShippingSavings": total_shipping_savings, "totalSavings": total_bundle_savings + total_shipping_savings}
+
+                # This simplified cost calculation could be improved to show bundle savings
+                item_cost = item_plan['quantity'] * float(pricing_info['price'])
+                subtotal += item_cost
+
+                vendor_orders[vendor_id]['items'].append({
+                    "id": original_item['id'],
+                    "name": original_item['name'],
+                    "unit": original_item['unit'],
+                    "quantity": item_plan['quantity'],
+                    "cost": item_cost,
+                    "price": float(pricing_info['price']),
+                    "bundles": pricing_info['bundles'],
+                    "prediction": original_item['prediction'],
+                    "remaining_stock": original_item['remaining_stock']
+                })
+            
+            vendor_orders[vendor_id]['subtotal'] = subtotal
+            if subtotal >= vendor_orders[vendor_id]['freeShippingThreshold']:
+                vendor_orders[vendor_id]['shippingCost'] = 0
+                total_shipping_savings += vendor_orders[vendor_id]['originalShippingCost']
+            
+            total_cost += subtotal + vendor_orders[vendor_id]['shippingCost']
+
+        cur.close()
+        
+        invoice = {
+            "vendorOrders": vendor_orders, 
+            "totalCost": total_cost, 
+            "totalBundleSavings": total_bundle_savings, 
+            "totalShippingSavings": total_shipping_savings, 
+            "totalSavings": total_bundle_savings + total_shipping_savings
+        }
+        
         conn.close()
         return jsonify({"invoice": invoice})
     except Exception as e:
-        print(f"Error generating invoice: {e}")
-        return jsonify({"error": "Failed to generate invoice"}), 500
+        print(f"Error generating AI invoice: {e}")
+        return jsonify({"error": "Failed to generate AI-powered invoice"}), 500
+    
+# @app.route('/generate-invoice', methods=['POST'])
+# def generate_invoice():
+#     try:
+#         data = request.json
+#         current_stock_levels = data['stockItems']
+#         vendor_filter = data.get('vendorFilter', [])
+#         conn = get_db_connection()
+        
+#         # 1. Use AI to predict what needs to be ordered
+#         items_to_order = calculate_orders_with_ai(current_stock_levels, conn)
+#         print(items_to_order)
+#         # 2. Use AI to generate an optimized purchasing plan
+#         optimized_plan = generate_optimized_invoice_with_ai(items_to_order, conn, vendor_filter)
+
+#         # 3. Structure the AI's plan into the final invoice format
+#         vendor_orders = {}
+#         total_cost = 0
+#         total_bundle_savings = 0 # Note: Detailed savings calculation would require more logic
+#         total_shipping_savings = 0
+
+#         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+#         for vendor_id, plan in optimized_plan.items():
+#             cur.execute('SELECT name, shipping_cost, free_shipping_threshold FROM vendors WHERE id = %s;', (vendor_id,))
+#             vendor_info = dict(cur.fetchone())
+            
+#             vendor_orders[vendor_id] = {
+#                 "vendorName": vendor_info['name'],
+#                 "items": [],
+#                 "subtotal": 0,
+#                 "bundleSavings": 0, # Simplified for this example
+#                 "shippingCost": float(vendor_info['shipping_cost']),
+#                 "originalShippingCost": float(vendor_info['shipping_cost']),
+#                 "freeShippingThreshold": float(vendor_info['free_shipping_threshold'])
+#             }
+
+#             subtotal = 0
+#             for item_plan in plan['items']:
+#                 # Fetch full item details
+#                 original_item = next((item for item in items_to_order if item['id'] == item_plan['product_id']), None)
+#                 if not original_item: continue
+
+#                 # This part is simplified. A full implementation would re-calculate the exact cost
+#                 # based on the AI's recommended quantity to also calculate savings.
+#                 # For now, we fetch the base price for display.
+#                 cur.execute('SELECT price, bundles FROM vendor_products WHERE vendor_id = %s AND product_id = %s;', (vendor_id, item_plan['product_id']))
+#                 pricing_info = dict(cur.fetchone())
+
+#                 # A more robust solution would re-run the _calculate_item_cost logic here
+#                 # to get the precise cost and savings for the AI-recommended order.
+#                 # For brevity, we'll approximate cost.
+#                 item_cost = item_plan['quantity'] * float(pricing_info['price'])
+#                 subtotal += item_cost
+
+#                 vendor_orders[vendor_id]['items'].append({
+#                     "id": original_item['id'],
+#                     "name": original_item['name'],
+#                     "unit": original_item['unit'],
+#                     "quantity": item_plan['quantity'],
+#                     "cost": item_cost,
+#                     "price": float(pricing_info['price']),
+#                     "bundles": pricing_info['bundles'],
+#                     "prediction": original_item['prediction'],
+#                     "remaining_stock": original_item['remaining_stock']
+#                 })
+            
+#             vendor_orders[vendor_id]['subtotal'] = subtotal
+#             if subtotal >= vendor_orders[vendor_id]['freeShippingThreshold']:
+#                 vendor_orders[vendor_id]['shippingCost'] = 0
+#                 total_shipping_savings += vendor_orders[vendor_id]['originalShippingCost']
+            
+#             total_cost += subtotal + vendor_orders[vendor_id]['shippingCost']
+
+#         cur.close()
+        
+#         invoice = {
+#             "vendorOrders": vendor_orders, 
+#             "totalCost": total_cost, 
+#             "totalBundleSavings": total_bundle_savings, 
+#             "totalShippingSavings": total_shipping_savings, 
+#             "totalSavings": total_bundle_savings + total_shipping_savings
+#         }
+        
+#         conn.close()
+#         return jsonify({"invoice": invoice})
+#     except Exception as e:
+#         print(f"Error generating AI invoice: {e}")
+#         return jsonify({"error": "Failed to generate AI-powered invoice"}), 500
 
 @app.route('/save-invoice', methods=['POST'])
 def save_invoice():

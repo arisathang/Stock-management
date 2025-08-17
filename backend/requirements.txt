@@ -5,3 +5,4 @@ psycopg2-binary
 apscheduler
 google-generativeai
 pandas
+python-dotenv
