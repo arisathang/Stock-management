@@ -1,18 +1,32 @@
 import os
 import json
-import google.generativeai as genai
+import ollama
 import psycopg2.extras
 from datetime import date, timedelta
 from dotenv import load_dotenv
+from decimal import Decimal
 
 load_dotenv()
 
-# Configure the Gemini API client
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-if not gemini_api_key:
-    raise ValueError("GEMINI_API_KEY environment variable not set.")
-genai.configure(api_key=gemini_api_key)
-model = genai.GenerativeModel('gemini-2.5-pro')
+# --- Ollama Configuration ---
+OLLAMA_ENABLED = False
+try:
+    # Use environment variables for host and model, with sensible defaults
+    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    ollama_model = os.getenv("OLLAMA_MODEL", "llama3") # llama3 is a good default
+
+    # Initialize the client
+    client = ollama.Client(host=ollama_host)
+    
+    # Check if the model is available locally
+    client.show(ollama_model) 
+    print(f"✅ Successfully connected to Ollama at {ollama_host} with model '{ollama_model}'")
+    OLLAMA_ENABLED = True
+except Exception as e:
+    print(f"⚠️ Warning: Could not connect to Ollama or find model '{os.getenv('OLLAMA_MODEL', 'llama3')}'. LLM features will be disabled.")
+    print(f"   Error: {e}")
+# --- End Ollama Configuration ---
+
 
 def get_historical_data(product_id, db_connection):
     """Fetches the last 90 days of stock movements for a product."""
@@ -33,58 +47,94 @@ def get_historical_data(product_id, db_connection):
 
 def calculate_orders_with_ai(current_stock_levels, db_connection):
     """
-    Uses the Gemini model to calculate the amount of each item to order
-    based on historical consumption.
+    Uses a single call to a local Ollama model to calculate the order amount for all necessary items.
     """
-    items_to_order = []
-    
+    if not OLLAMA_ENABLED:
+        print("LLM prediction skipped: Ollama not configured.")
+        # Fallback to simple logic if AI is disabled
+        return [{"id": item['id'], "order_amount": item['last_year_prediction'] - item['remaining_stock']} for item in current_stock_levels if item['remaining_stock'] < item['min_stock']]
+
+    # 1. First, gather all items that are below the minimum stock threshold.
+    items_needing_review = []
     for item_data in current_stock_levels:
-        # We only generate orders for items below their minimum stock level
-        if item_data['remaining_stock'] >= item_data['min_stock']:
-            continue
-            
-        history = get_historical_data(item_data['id'], db_connection)
-        
-        prompt = f"""
-        You are an expert inventory manager for a restaurant.
-        Analyze the following data for a product and determine how much of it we need to order.
-
-        Product Details:
-        - Name: {item_data['name']} ({item_data['unit']})
-        - Current Stock: {item_data['remaining_stock']}
-        - Minimum Stock Threshold: {item_data['min_stock']}
-        - Maximum Stock Threshold: {item_data['max_stock']}
-
-        Recent Consumption History (last 90 days):
-        {history if history else "  - No recent consumption data."}
-
-        Task:
-        Based on the data, calculate the ideal quantity to order. The goal is to replenish the stock to a healthy level without exceeding the maximum threshold.
-        
-        Consider the consumption trend. If usage is high, ordering up to the maximum is wise. If usage is low, a smaller order to just get above the minimum is better.
-        
-        Return ONLY a single integer number representing the recommended order amount. Do not add any other text or explanation.
-        """
-        
-        try:
-            response = model.generate_content(prompt)
-            # Basic validation to ensure the response is a number
-            order_amount = int(response.text.strip())
-        except (ValueError, Exception) as e:
-            print(f"Error processing AI response for {item_data['name']}: {e}. Defaulting to zero.")
-            order_amount = 0 # Default to 0 if AI fails
-
-        if order_amount > 0:
-            items_to_order.append({
-                "id": item_data['id'],
+        if item_data['remaining_stock'] < item_data['min_stock']:
+            history = get_historical_data(item_data['id'], db_connection)
+            items_needing_review.append({
+                "product_id": item_data['id'],
                 "name": item_data['name'],
                 "unit": item_data['unit'],
-                "order_amount": order_amount,
-                "prediction": order_amount, # Use AI result as the prediction
-                "remaining_stock": item_data['remaining_stock']
+                "current_stock": item_data['remaining_stock'],
+                "min_stock": item_data['min_stock'],
+                "max_stock": item_data['max_stock'],
+                "consumption_history": history if history else "No recent consumption data."
             })
-            
-    return items_to_order
+
+    if not items_needing_review:
+        return []
+
+    # 2. Create a single, comprehensive prompt for all items.
+    prompt = f"""
+    You are an expert inventory manager for a restaurant.
+    Analyze the following list of products and determine how much of each we need to order.
+
+    # Products to Analyze:
+    {json.dumps(items_needing_review, indent=2)}
+
+    # Task:
+    For each product, calculate the ideal quantity to order.
+    - The goal is to replenish the stock to a healthy level without exceeding the maximum threshold.
+    - Consider the consumption trend. If usage is high, ordering up to the maximum is wise. If usage is low, a smaller order to just get above the minimum is better.
+    - If an item doesn't need to be ordered, set its order amount to 0.
+
+    # Response Format:
+    Return your answer as a single, valid JSON object.
+    - The object should have a single key: "orders".
+    - The value of "orders" must be a list of objects.
+    - Each object in the list must contain two keys:
+        1. `product_id`: The integer ID of the product.
+        2. `order_amount`: The recommended integer quantity to order.
+
+    Example of a PERFECT response format:
+    {{
+      "orders": [
+        {{ "product_id": 101, "order_amount": 50 }},
+        {{ "product_id": 105, "order_amount": 0 }},
+        {{ "product_id": 112, "order_amount": 25 }}
+      ]
+    }}
+
+    Provide ONLY the JSON response. Do not include any other text, explanations, or markdown formatting.
+    """
+
+    # 3. Make a single call to the LLM.
+    try:
+        response = client.generate(model=ollama_model, prompt=prompt, options={"format": "json"})
+        ai_orders = json.loads(response['response']).get('orders', [])
+        
+        # 4. Map the AI response back to the original data structure.
+        items_to_order = []
+        original_items_by_id = {item['id']: item for item in current_stock_levels}
+
+        for order in ai_orders:
+            order_amount = int(order.get('order_amount', 0))
+            product_id = order.get('product_id')
+
+            if order_amount > 0 and product_id in original_items_by_id:
+                item_data = original_items_by_id[product_id]
+                items_to_order.append({
+                    "id": item_data['id'],
+                    "name": item_data['name'],
+                    "unit": item_data['unit'],
+                    "order_amount": order_amount,
+                    "prediction": order_amount, # Using AI result as the "prediction"
+                    "remaining_stock": item_data['remaining_stock']
+                })
+        return items_to_order
+
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"Error processing batched AI response: {e}")
+        print(f"Raw AI Response was: {response.get('response', 'N/A')}")
+        return []
 
 def get_all_vendor_pricing(item_ids, db_connection, vendor_filter=[]):
     """Fetches all pricing, bundle, and shipping info for the required items."""
@@ -106,13 +156,19 @@ def get_all_vendor_pricing(item_ids, db_connection, vendor_filter=[]):
         
     cur.execute(query, tuple(params))
     
-    # Structure the data for the AI prompt
     pricing_data = {}
     for row in cur.fetchall():
-        pid = row['product_id']
+        # Convert the database row to a mutable dictionary
+        row_dict = dict(row)
+        # --- FIX: Convert all Decimal types to float at the source ---
+        for key, value in row_dict.items():
+            if isinstance(value, Decimal):
+                row_dict[key] = float(value)
+        
+        pid = row_dict['product_id']
         if pid not in pricing_data:
             pricing_data[pid] = []
-        pricing_data[pid].append(dict(row))
+        pricing_data[pid].append(row_dict)
         
     cur.close()
     return pricing_data
@@ -120,59 +176,75 @@ def get_all_vendor_pricing(item_ids, db_connection, vendor_filter=[]):
 
 def generate_optimized_invoice_with_ai(items_to_order, db_connection, vendor_filter=[]):
     """
-    Uses the Gemini model to find the most cost-effective purchasing plan for a list of items.
+    Uses a local Ollama model to find the most cost-effective purchasing plan.
     """
     if not items_to_order:
-        return {} # Return empty if there's nothing to order
+        return {}
+    
+    if not OLLAMA_ENABLED:
+        print("LLM optimization skipped: Ollama not configured.")
+        return {} # Return empty plan if AI is disabled
 
     item_ids = [item['id'] for item in items_to_order]
     pricing_data = get_all_vendor_pricing(item_ids, db_connection, vendor_filter)
 
-    # Create a detailed context for the AI
-    items_prompt = "\n".join([f"- {item['name']}: {item['order_amount']} {item['unit']}" for item in items_to_order])
+    # We need to map product IDs to names for the prompt to be more readable for the AI
+    product_id_to_name = {item['id']: f"{item['name']} ({item['unit']})" for item in items_to_order}
+    items_prompt_list = [f"- {product_id_to_name[item['id']]}: {item['order_amount']}" for item in items_to_order]
+    items_prompt = "\n".join(items_prompt_list)
+    
     pricing_prompt = json.dumps(pricing_data, indent=2)
 
+    # --- FIX 2: Make the prompt much more specific to prevent errors ---
     prompt = f"""
     You are an expert procurement officer for a restaurant. Your task is to create the most cost-effective purchase plan.
 
-    Here are the items we need to order:
-    {items_prompt}
+    # Items to Order:
+    Here are the items we need to order, with their internal product ID and required quantity:
+    {json.dumps(items_to_order, indent=2)}
 
-    Here is the pricing information from our available vendors. 'bundles' shows discount price for a certain quantity.
+    # Vendor Pricing Data:
+    This is the pricing information from our available vendors. 'bundles' shows discount prices for specific quantities.
     {pricing_prompt}
 
-    Task:
-    Determine the best vendor to purchase each item from to minimize the TOTAL cost. Your calculation must include shipping costs.
-    Remember that shipping is free if the subtotal for a single vendor meets their 'free_shipping_threshold'.
-    Sometimes, it's cheaper to buy from a slightly more expensive vendor if it helps you reach the free shipping threshold and avoid a shipping fee.
+    # Task:
+    Create an optimal purchasing plan that minimizes the TOTAL cost, including shipping.
+    - Your calculation MUST factor in shipping costs.
+    - Shipping is FREE from a vendor if the subtotal of items from them meets their 'free_shipping_threshold'.
+    - It may be cheaper overall to buy from a slightly more expensive vendor to meet their free shipping threshold.
 
-    Return your answer as a JSON object with the vendor ID as the key. Each value should be an object containing a list of `items` to order from that vendor.
-    
-    Example Response Format:
+    # Response Format:
+    Return your answer as a single, valid JSON object.
+    - The keys of the JSON object MUST be the integer `vendor_id` from the pricing data provided.
+    - The value for each vendor key MUST be an object containing one key: "items".
+    - "items" MUST be a list of objects, where each object has two keys:
+        1. `product_id`: The integer ID of the product.
+        2. `quantity`: The integer quantity to order.
+
+    Example of a PERFECT response format:
     {{
-        "vendor1": {{
+        "1": {{
             "items": [
-                {{"product_id": "item1", "quantity": 50}},
-                {{"product_id": "item7", "quantity": 60}}
+                {{"product_id": 101, "quantity": 50}},
+                {{"product_id": 107, "quantity": 60}}
             ]
         }},
-        "vendor3": {{
+        "3": {{
             "items": [
-                {{"product_id": "item3", "quantity": 25}}
+                {{"product_id": 103, "quantity": 25}}
             ]
         }}
     }}
     
-    Provide ONLY the JSON response. Do not include any other text, explanations, or formatting like ```json.
+    Provide ONLY the JSON response. Do not include any other text, explanations, or markdown formatting like ```json.
     """
 
     try:
-        response = model.generate_content(prompt)
-        # Clean up the response to ensure it's valid JSON
-        cleaned_response = response.text.strip().replace("```json\n", "").replace("\n```", "")
-        optimized_plan = json.loads(cleaned_response)
+        response = client.generate(model=ollama_model, prompt=prompt, options={"format": "json"})
+        # The 'format: json' option for Ollama helps ensure the output is valid JSON.
+        optimized_plan = json.loads(response['response'])
         return optimized_plan
     except (json.JSONDecodeError, Exception) as e:
         print(f"Error processing AI optimization response: {e}")
-        return {} # Return empty plan on failure
-    
+        print(f"Raw AI Response was: {response.get('response', 'N/A')}") # Log the raw response for debugging
+        return {}
